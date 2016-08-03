@@ -1,0 +1,20 @@
+<?xml version="1.0"?>
+<openerp>
+    <data>
+        <record model="ir.ui.view" id="crm_case_form_view_leads">
+            <field name="name">CRM - Leads Form</field>
+            <field name="model">crm.lead</field>
+            <field name="inherit_id" ref="l10n_br_crm.l10n_br_crm_case_form_view_leads1" />
+	        <field name="arch" type="xml">
+                <field name="inscr_mun" position="replace">
+                    <field name="inscr_mun" invisible="1"/>
+                </field>
+                <field name="suframa" position="replace">
+                    <field name="suframa" invisible="1"/>
+                </field>
+
+            </field>
+        </record>
+
+    </data>
+</openerp>

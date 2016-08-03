@@ -1,0 +1,432 @@
+#  -*- encoding: utf-8 -*-
+# #############################################################################
+#                                                                             #
+#  Copyright (C) 2015  Carlos Silveira - ATS                                  #
+#                                                                             #
+# This program is free software: you can redistribute it and/or modify        #
+# it under the terms of the GNU Affero General Public License as published by #
+# the Free Software Foundation, either version 3 of the License, or           #
+# (at your option) any later version.                                         #
+#                                                                             #
+# This program is distributed in the hope that it will be useful,             #
+# but WITHOUT ANY WARRANTY; without even the implied warranty of              #
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the               #
+# GNU Affero General Public License for more details.                         #
+#                                                                             #
+# You should have received a copy of the GNU Affero General Public License    #
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.       #
+# #############################################################################
+
+import re
+from openerp import models, fields, api, _
+from openerp.exceptions import except_orm
+from openerp.addons.l10n_br_base.tools import fiscal
+from openerp.exceptions import Warning
+
+class CrmLead(models.Model):
+    """ CRM Lead Case """
+    _inherit = "crm.lead"
+
+    """
+    def _check_color(self, cr, uid, ids, field_name, arg, context):
+        res = {}
+        for record in self.browse(cr, uid, ids, context):
+            color = 0
+            if record.etapa_1:
+                color = 1
+            if record.etapa_2:
+                color = 2
+            if record.etapa_3:
+                color = 3
+            if record.etapa_4:
+                color = 4
+            if record.etapa_5:
+                color = 5
+            res[record.id] = color
+        return res
+    """
+    mobile = fields.Char('Mobile')
+    pais_expedicao = fields.Char('Pais expedição')
+    data_expedicao = fields.Date('Data expedição')
+    orgao_emissor = fields.Char('Orgão Emissor')
+    pais_fiscal = fields.Many2one('res.country', 'Pais Res. Fiscal', ondelete='restrict')
+    pais_fiscal_obrig = fields.Many2one('res.country', 'Pais Obrigacoes Fiscais', ondelete='restrict', 
+        help='PAÍS COM OBRIGAÇÕES FISCAIS POR MOTIVO DE RESIDÊNCIA OU '
+        'CIDADANIA DIFERENTE DO BRASIL')
+    ramo_atividade = fields.Char('Ramo de Atividade')
+    sexo = fields.Selection([('f','Feminino'), ('m','Masculino')],'Sexo')
+    dados_cobranca = fields.Text('Dados Cobrança')
+    dados_contratacao = fields.Text('Dados Contratação')
+    etapa_1 = fields.Boolean("Etapa 1")
+    etapa_2 = fields.Boolean("Etapa 2")
+    etapa_3 = fields.Boolean("Etapa 3")
+    etapa_4 = fields.Boolean("Etapa 4")
+    etapa_5 = fields.Boolean("Etapa 5")
+    state = fields.Selection([('p1', 'Visita'),
+                                   ('p2','Proposta'),
+                                   ('p3','Entregar Proposta'),
+                                   ('p4','Exame Médico'),
+                                   ('p5','Fechar'),
+                                   ('f','Encerrado')],
+                                  'Status', required=True, copy=False)
+    result_exame = fields.Selection([('a', 'Aprovado'),
+                                   ('b','Sobretaxado'),
+                                   ('c','Reprovado')],
+                                  'Resultado Exame', copy=False)
+    acao_pos_exame = fields.Selection([('a', 'Aguardar apolice'),
+                                   ('b','Refazer proposta'),
+                                   ('c','Apresentar sobretaxa')],
+                                  'Ação pós Exame', copy=False)
+    date_p_visita = fields.Date('Primeira Visita', select=True)
+    date_proposta = fields.Date('Fazer Proposta', select=True)
+    date_l_proposta = fields.Date('Levar Proposta', select=True)
+    date_exame = fields.Date('Data Exame', select=True)
+    date_fechar = fields.Date('Data Fechar', select=True)
+    #member_color = fields.Function(_check_color, 'Cor', type="integer")
+
+    _defaults = {
+        'country_id': 32,
+        'state_id': 71,
+        'state': 'p1'
+    }
+
+    _order = 'create_date desc, priority desc'
+
+    def create(self, cr, uid, vals, context=None):
+        context = dict(context or {})
+        if vals.get('date_p_visita'):
+            vals['date_action'] = vals.get('date_p_visita')
+        vals['name'] = 'Bin vivir'
+        if 'email_from' in vals:
+            crm_obj = self.pool.get('crm.lead')
+            crm_ids = self.search(cr, uid, [('email_from', '=', vals.get('email_from'))], context=context)
+            for lead in self.browse(cr, uid, crm_ids, context=context):
+                #partner_ids = self.poool.get('crm.lead').search([('email_from', '=', vals.get('email'))])
+                stage_id_lost = self.stage_find(cr, uid, [lead], lead.section_id.id or False, [('probability', '=', 0.0), ('on_change', '=', True), ('sequence', '>', 1)], context=context)
+                stage_id_won = self.stage_find(cr, uid, [lead], lead.section_id.id or False, [('probability', '=', 100.0), ('on_change', '=', True)], context=context)
+                if not lead.stage_id.id in (stage_id_lost, stage_id_won):
+                    raise except_orm(_(u'Oportunidade duplicada'),
+                        _(u'Já existe uma oportunidade com este email!'))
+
+        if vals.get('type') and not context.get('default_type'):
+            context['default_type'] = vals.get('type')
+        if vals.get('section_id') and not context.get('default_section_id'):
+            context['default_section_id'] = vals.get('section_id')
+        if vals.get('user_id'):
+            vals['date_open'] = fields.datetime.now()
+
+        # context: no_log, because subtype already handle this
+        create_context = dict(context, mail_create_nolog=True)
+        return super(CrmLead, self).create(cr, uid, vals, context=create_context)
+
+    def valida_etapa(self, cr, uid, ids, context=None):
+        for lead in self.browse(cr, uid, ids, context=context):
+            # nao vai mudar o estagio , se entrou aqui pq alterou o estagio
+            etapa = lead.etapa_1 
+            if lead.etapa_2:
+                #valida algo = 2
+                if not etapa:
+                    raise except_orm(
+                        _(u'Dados imcompletos no cadastro do cliente'),
+                        _(u'%s') % (u'ORGÃO EMISSOR')) 
+                etapa = lead.etapa_2 
+        return etapa
+
+    def write(self, cr, uid, ids, vals, context=None):
+        # stage change: update date_last_stage_update
+        self.valida_etapa(cr,uid, ids, context)
+        """
+        if 'stage_id' in vals:
+        partner_obj = self.pool.get('res.partner')
+        for lead in self.browse(cr, uid, ids, context=context):
+            if lead.stage_id.id == 2:
+                # conferir se campos obrigatorios da etapa 1 foram preenchidos
+                if not lead.orgao_emissor:
+                    raise except_orm(
+                        _(u'Dados imcompletos no cadastro do cliente'),
+                        _(u'%s') % (u'ORGÃO EMISSOR')) 
+
+            if lead.stage_id.id == 6:
+                if not lead.partner_id:
+                    erro = '' 
+                    if not lead.legal_name:
+                        erro = u'Razão Social(Nome que saira no Contrato.)\n'
+                    if erro != '':
+                        raise except_orm(
+                            _(u'Dados incompletos!'),
+                            _(u'%s') % (erro)) 
+
+                    partner_id = 0
+                    if lead.email_from:
+                        partner_ids = partner_obj.search(cr, uid, [('email', '=', lead.email_from)], context=context)
+                        if partner_ids:
+                            partner_id = partner_ids[0]
+                    elif lead.cnpj:
+                        partner_ids = partner_obj.search(cr, uid, [('cnpj_cpf', '=', lead.cnpj)], context=context)
+                        if partner_ids:
+                            partner_id = partner_ids[0]
+                    elif lead.cpf:
+                        partner_ids = partner_obj.search(cr, uid, [('cnpj_cpf', '=', lead.cpf)], context=context)
+                        if partner_ids:
+                            partner_id = partner_ids[0]
+                    # Search through the existing partners based on the lead's partner or contact name
+                    elif lead.partner_name:
+                        partner_ids = partner_obj.search(cr, uid, [('name', 'ilike', '%'+lead.partner_name+'%')], context=context)
+                        if partner_ids:
+                            partner_id = partner_ids[0]
+                    elif lead.contact_name:
+                        partner_ids = partner_obj.search(cr, uid, [
+                            ('name', 'ilike', '%'+lead.contact_name+'%')], context=context)
+                        if partner_ids:
+                            partner_id = partner_ids[0]
+                    if partner_id == 0:
+                        partner_id = self._create_lead_partner(cr, uid, lead, context)
+
+        if 'stage_id' in vals:
+            vals['date_last_stage_update'] = fields.datetime.now()
+        if vals.get('user_id'):
+            vals['date_open'] = fields.datetime.now()
+        # stage change with new stage: update probability and date_closed
+        """
+        #import pudb;pu.db
+        if vals.get('date_p_visita'):
+            vals['date_action'] = vals.get('date_p_visita')
+        if vals.get('date_proposta'):
+            vals['date_action'] = vals.get('date_proposta')
+        if vals.get('date_l_proposta'):
+            vals['date_action'] = vals.get('date_l_proposta')
+        if vals.get('date_exame'):
+            vals['date_action'] = vals.get('date_exame')
+        if vals.get('date_fechar'):
+            vals['date_action'] = vals.get('date_fechar')
+        if vals.get('stage_id') and not vals.get('probability'):
+            onchange_stage_values = self.onchange_stage_id(cr, uid, ids, vals.get('stage_id'), context=context)['value']
+            vals.update(onchange_stage_values)
+        return super(CrmLead, self).write(cr, uid, ids, vals, context=context)
+
+    
+    @api.model
+    def _lead_create_contact(self, lead, name, is_company, parent_id=False):
+        id = super(CrmLead, self)._lead_create_contact(
+            lead, name, is_company, parent_id)
+        value = {
+            'number': lead.number,
+            'district': lead.district,
+            'l10n_br_city_id': lead.l10n_br_city_id.id,
+            'razao_empresa': lead.partner_name,
+            'legal_name': lead.legal_name,
+            'company_id': lead.company_id.id
+        }
+        if is_company:
+            value.update({
+                'cnpj_cpf': lead.cnpj,
+                'inscr_est': lead.inscr_est,
+                'inscr_mun': lead.inscr_mun,
+                'suframa': lead.suframa,
+                })
+        else:
+            value.update({
+                'cnpj_cpf': lead.cpf,
+                'inscr_est': lead.rg,
+                })
+        if id:
+            partner = self.env['res.partner'].browse(id)
+            partner[0].write(value)
+        return id
+    
+    
+    def _create_lead_partner(self, cr, uid, lead, context=None):
+        partner_id = False
+        if lead.partner_name and lead.contact_name:
+            partner_id = self._lead_create_contact(cr, uid, lead, lead.partner_name, lead.is_company, context=context)
+            # nao preciso disto , estava criando o cliente e o contato com o mesmo cpf ou cnpj
+            #partner_id = self._lead_create_contact(cr, uid, lead, lead.contact_name, lead.is_company, partner_id, context=context)
+        elif lead.partner_name and not lead.contact_name:
+            partner_id = self._lead_create_contact(cr, uid, lead, lead.partner_name, lead.is_company, context=context)
+        elif not lead.partner_name and lead.contact_name:
+            partner_id = self._lead_create_contact(cr, uid, lead, lead.contact_name, lead.is_company, context=context)
+        elif lead.email_from and self.pool.get('res.partner')._parse_partner_name(lead.email_from, context=context)[0]:
+            contact_name = self.pool.get('res.partner')._parse_partner_name(lead.email_from, context=context)[0]
+            partner_id = self._lead_create_contact(cr, uid, lead, contact_name, lead.is_company, context=context)
+        else:
+            raise osv.except_osv(
+                _('Warning!'),
+                _('No customer name defined. Please fill one of the following fields: Company Name, Contact Name or Email ("Name <email@address>")')
+            )
+        return partner_id 
+    
+
+    def case_mark_won(self, cr, uid, ids, context=None):
+
+        """
+           AQUI vou alterar o Estágio para a proxima etapa
+
+   
+        """
+
+        partner_obj = self.pool.get('res.partner')
+        # A partner is set already
+            # Search through the existing partners based on the lead's email
+        """ Mark the case as won: state=done and probability=100
+        """
+        stages_leads = {}
+        vals = {}
+        for lead in self.browse(cr, uid, ids, context=context):
+            erro = '' 
+            if not lead.partner_name:
+                erro = u'Razão Social(Nome que saira no Contrato.)\n'
+            #if lead.is_company and not lead.cnpj:
+            #    erro = erro + u'CNPJ do cliente.\n'
+            #if not lead.is_company and not lead.cpf:
+            #    erro = erro + u'CPF do cliente.\n'
+            #if not lead.inscr_est and not lead.rg:
+            #    erro = erro + u'Inscrição Estadual ou RG.'
+
+            if erro != '':
+                raise except_orm(
+                               _(u'Dados incompletos!'),
+                               _(u'%s') % (erro)) 
+            partner_id = 0
+            if lead.email_from:
+                partner_ids = partner_obj.search(cr, uid, [('email', '=', lead.email_from)], context=context)
+                if partner_ids:
+                    partner_id = partner_ids[0]
+            elif lead.cnpj:
+                partner_ids = partner_obj.search(cr, uid, [('cnpj_cpf', '=', lead.cnpj)], context=context)
+                if partner_ids:
+                    partner_id = partner_ids[0]
+            elif lead.cpf:
+                partner_ids = partner_obj.search(cr, uid, [('cnpj_cpf', '=', lead.cpf)], context=context)
+                if partner_ids:
+                    partner_id = partner_ids[0]
+            # Search through the existing partners based on the lead's partner or contact name
+            elif lead.partner_name:
+                partner_ids = partner_obj.search(cr, uid, [('name', 'ilike', '%'+lead.partner_name+'%')], context=context)
+                if partner_ids:
+                    partner_id = partner_ids[0]
+            elif lead.contact_name:
+                partner_ids = partner_obj.search(cr, uid, [
+                        ('name', 'ilike', '%'+lead.contact_name+'%')], context=context)
+                if partner_ids:
+                    partner_id = partner_ids[0]
+            """
+            if partner_id == 0:
+                partner_id = self._create_lead_partner(cr, uid, lead, context)
+            """    
+
+            #stage_id = self.stage_find(cr, uid, [lead], lead.section_id.id or False, [('probability', '=', 100.0), ('on_change', '=', True)], context=context)
+            dados_cob = ' DADOS COBRANÇA \n' \
+                   '| | Boleto Bancário \n' \
+                   '| | Débito em Conta Corrente* \n' \
+                   '| | Débito em Conta 2a titularidade e/ou Terceiros** \n' \
+                   ' \n' \
+                   'Banco : \n' \
+                   'Agencia: \n' \
+                   'Conta: \n' \
+                   ' \n' \
+                   ' \n' \
+                   ' DADOS DE CONTRATAÇÃO \n' \
+                   ' \n' \
+                   ' \n' \
+                   ' DADOS DO(S) BENEFICIÁRIO(S) \n' \
+                   ' \n' \
+                   ' \n' \
+                   ' DADOS DO ASSESSOR COMERCIAL/ COORDENADOR COMERCIAL \n' \
+                   ' \n' \
+                   ' \n' \
+                   ' DADOS DE PRODUÇÃO \n' \
+                   ' \n' \
+                   ' \n'
+            if not lead.etapa_5 and lead.etapa_4:
+                lead.etapa_5 = True
+                stage_id = 6
+                state = 'f'
+                if not lead.date_fechar:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha data do fechamento.'))
+                if not lead.result_exame:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha o resultado do exame.'))
+                if not lead.acao_pos_exame:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha a ação a ser tomada após exame.'))
+            if not lead.etapa_4 and lead.etapa_3:
+                lead.etapa_4 = True
+                stage_id = 5
+                state = 'p5'
+                if not lead.date_exame:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha data do exame médico.'))
+            if not lead.etapa_3 and lead.etapa_2:
+                lead.etapa_3 = True
+                stage_id = 4
+                state = 'p4'
+                if not lead.date_l_proposta:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha data de entrega da proposta.'))
+            if not lead.etapa_2 and lead.etapa_1:
+                #if len(lead.dados_cobranca) < 140:
+                #    raise except_orm(
+                #        _('Warning!'),
+                #        _('Preencha os dados de Cobrança.'))
+
+                lead.etapa_2 = True
+                stage_id = 3
+                state = 'p3'
+                if not lead.date_proposta:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha data para finalizar a proposta.'))
+                dados_contrato = 'Capital______- Morte:       Sobrevivencia:       Invalidez(IPA):      Total:  \n' \
+                        'Premio Bruto - Morte:       Sobrevivencia:       Invalidez(IPA):      Total:  \n' \
+                        'IOF_________ - Morte:       Sobrevivencia:       Invalidez(IPA):      Total:  \n' \
+                        ' \n' \
+                        'PRAZO DE COBERTURA DO SEGURO       ANOS \n' \
+                        'DATA PREVISTA PARA CONCESSÃO DO CAPITAL DE SOBREVIVÊNCIA   (ano de término de vigência da apólice) \n' \
+                        'CLASSIFICAÇÃO DO RISCO: STANDARD   | | Fumante   | | Não Fumante  CLASSE :   \n'
+                #vals['dados_contratacao'] = dados_contrato
+            if not lead.etapa_1:
+                lead.etapa_1 = True
+                stage_id = 2
+                state = 'p2'
+                vals['dados_cobranca'] = dados_cob
+                if not lead.date_p_visita:
+                    raise except_orm(
+                        _('Warning!'),
+                        _('Preencha data da Primeira Visita.'))
+            if stage_id:
+                #stages_leads[etapa_1stage_id].append(lead.id)
+                stages_leads[stage_id] = [lead.id]
+                #stages_leads[state] = [lead.id]
+            #if not lead.title_action:
+            #    raise except_orm(
+            #                    _('Warning!'),
+            #                    _('Informe a data da \n'
+            #                      'proxima ação.'))
+
+
+            """
+            if stage_id:
+                if stages_leads.get(stage_id):
+                    stages_leads[stage_id].append(lead.id)
+                else:
+                    stages_leads[stage_id] = [lead.id]
+            else:
+                raise except_orm(
+                                _('Warning!'),
+                                _('To relieve your sales pipe and group all Won opportunities, configure one of your sales stage as follow:\n'
+                                  'probability = 100 % and select "Change Probability Automatically".\n'
+                                  'Create a specific stage or edit an existing one by editing columns of your opportunity pipe.'))
+            """
+        vals['stage_id'] = stage_id
+        vals['partner_id'] = partner_id
+        vals['state'] = state
+        for stage_id, lead_ids in stages_leads.items():
+            self.write(cr, uid, lead_ids, vals, context=context)
+        return True
+

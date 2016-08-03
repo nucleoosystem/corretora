@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="utf-8"?>
+<openerp>
+    <data>
+        <!-- CRM Opportunity Form View  -->
+        <record model="ir.ui.view" id="corretora_crm_case_form_view_oppor">
+            <field name="name">Bin vivir </field>
+            <field name="model">crm.lead</field>
+            <field name="inherit_id" ref="l10n_br_crm.l10n_br_crm_case_form_view_oppor1" />
+            <field name="arch" type="xml">
+                <xpath expr="//form/header" position="replace">
+                    <header>
+						<field name="state" widget="statusbar" readonly="1"/> 
+                    </header>
+                </xpath>
+                <xpath expr="//form/sheet" position="replace">
+                <sheet>
+					<field name="stage_id" invisible="1"/> 
+                    <button name="case_mark_won" string="Etapa Concluída" attrs="{'invisible': [('probability', '=', 100)]}" type="object" class="oe_highlight"/>
+                    <button name="case_mark_lost" string="Mark Lost" attrs="{'invisible': [('probability', '=', 100)]}" type="object" class="oe_highlight"/>
+                    <div class="oe_right oe_button_box">
+                        <button class="oe_inline oe_stat_button" type="action"
+                            name="%(crm.crm_case_categ_phone_incoming0)d" icon="fa-phone"
+                            context="{'default_opportunity_id': active_id, 'search_default_opportunity_id': active_id, 'default_partner_id': partner_id, 'default_duration': 1.0}">
+                            <div>Schedule/Log<br/>Calls</div>
+                        </button>
+                        <button class="oe_inline oe_stat_button" type="object"
+                            context="{'partner_id': partner_id}"
+                            name="action_schedule_meeting" icon="fa-calendar">
+                            <field string="Meetings" name="meeting_count" widget="statinfo"/>
+                        </button>
+                    </div>
+                    <group>
+                        <field name="user_id" on_change="on_change_user(user_id, context)" context="{'default_groups_ref': ['base.group_user', 'base.group_partner_manager', 'base.group_sale_salesman_all_leads']}"/>
+                        <label for="section_id" groups="base.group_multi_salesteams"/>
+                        <div groups="base.group_multi_salesteams">
+                            <field name="section_id" widget="selection"/>
+                            <button name="case_escalate" string="Escalate" type="object" class="oe_link"
+                                    attrs="{'invisible': ['|', ('section_id','=',False), ('probability', '=', 100)]}"/>
+                        </div>
+                    </group>
+                    <group>
+                        <field name="categ_ids"
+                            widget="many2many_tags"
+                            context="{'object_name': 'crm.lead'}"
+                            domain="[('object_id.model', '=', 'crm.lead')]"/>
+                        <field name="partner_name"/>
+                    </group>
+                    <notebook colspan="4">
+                    <page string="Dados Cliente" >
+                        <group>
+                            <group>
+								<field name="partner_id"
+									invisible="1"
+                                    on_change="on_change_partner_id(partner_id)"
+                                    string="Customer"
+                                    context="{'default_name': partner_name, 'default_email': email_from, 'default_phone': phone}"/>
+                                <field name="contact_name"/>
+                                <field name="title"/>
+                            </group>
+                            <group>
+                                <field name="sexo"/>
+                                <field name="function"/>
+                                <field name="ramo_atividade"/>
+                            </group>
+                            <group>
+                                <field name="email_from" string="Email" widget="email"/>
+                                <field name="phone"/>
+                                <field name="mobile"/>
+                            </group>
+                            <group>
+                                <field name="inscr_est" string="Documento"/>
+                                <field name="data_expedicao"/>
+                                <field name="orgao_emissor"/>
+                            </group>
+                            <group>
+                                <field name="pais_expedicao"/>
+                                <field name="pais_fiscal"/>
+                                <field name="pais_fiscal_obrig"/>
+                            </group>
+                            <group>
+                                <field name="etapa_1"/>
+                                <field name="date_p_visita"/>
+                            </group>
+
+
+                        </group>
+
+                    </page>
+                    <page string="Proposta" attrs="{'invisible': [('stage_id', '=', 1)]}">
+                        <field name="dados_cobranca"/>
+                        <group>
+                            <field name="etapa_2"/>
+                            <field name="date_proposta"/>
+                        </group>
+                    </page>
+                    <page string="Levar Proposta" attrs="{'invisible': [('stage_id', 'in', [1,2])]}">
+                        <field name="dados_contratacao"/>
+                        <group>
+                            <field name="etapa_3"/>
+                            <field name="date_l_proposta"/>
+                        </group>
+                    </page>
+                    <page string="Exame Médico" attrs="{'invisible': [('stage_id', 'in', [1,2,3])]}">
+                        <group>
+                            <field name="etapa_4"/>
+                            <field name="date_exame"/>
+                        </group>
+                    </page>
+                    <page string="Fechar" attrs="{'invisible': [('stage_id', 'in', [1,2,3,4])]}">
+                        <group>
+                            <field name="etapa_5"/>
+                            <field name="result_exame"/>
+                            <field name="acao_pos_exame"/>
+                            <field name="date_fechar"/>
+                        </group>
+                    </page>
+                    <page string="Diversos" attrs="{'invisible': [('stage_id', 'in', [1,2,3,4,5])]}">
+                        <group>
+                            <group string="Categorization" groups="base.group_multi_company,base.group_no_one" name="categorization">
+                                <field name="company_id"
+                                    groups="base.group_multi_company"
+                                    widget="selection"/>
+                            </group>
+                            <group string="Mailings">
+                                <field name="opt_out"/>
+                                <field name="message_bounce"/>
+                            </group>
+                            <group string="Misc">
+                                <field name="probability" groups="base.group_no_one"/>
+                                <field name="active"/>
+                                <field name="referred"/>
+                            </group>
+                            <group>
+                                <field name="date_open" groups="base.group_no_one"/>
+                                <field name="date_closed" groups="base.group_no_one"/>
+                            </group>
+                        </group>
+                        <group>
+                            <field name="etapa_4"/>
+                        </group>
+                    </page>
+                    <page string="Outras Informações" attrs="{'invisible': [('stage_id', 'in', [1,2,3,4])]}">
+                        <field name="description"/>
+                        <group>
+                            <field name="etapa_5"/>
+                        </group>
+                    </page>
+                    </notebook>
+					<separator/>
+                    <group>
+                        <label for="title_action"/>
+                        <div>
+                            <field name="date_action" readonly="1" nolabel="1"/> <label string="-" attrs="{'invisible': ['|', ('date_action', '=', False), ('title_action', '=', False)]}"/>
+                            <field name="title_action" class="oe_inline" nolabel="1" placeholder="e.g. Call for proposal"/>
+                        </div>
+                        <field name="date_deadline"/>
+                        <field name="priority" widget="priority"/>
+					</group>
+				</sheet>
+				</xpath> 
+            </field> 
+        </record>
+
+        <record model="ir.ui.view" id="corretora_crm_case_kanban_view_leads">
+            <field name="name">Opportunities Kanban</field>
+            <field name="model">crm.lead</field>
+			<field name="inherit_id" ref="crm.crm_case_kanban_view_leads" />
+            <field name="arch" type="xml">
+				<xpath expr="//div[contains(@class, 'oe_kanban_content')]" position="replace">
+                    <div>
+                        <b><field name="name"/></b>
+                        <t t-if="record.planned_revenue.raw_value">
+                            - <b><t t-esc="record.planned_revenue.value"/>
+                            <field name="company_currency"/></b>
+                        </t>
+                    </div>
+                    <div>
+                        <b><field name="partner_name" /></b>
+                    </div>
+                    <div>
+                        <b><field name="create_date" /></b>
+                    </div>
+                    <div>
+                        <field name="partner_id"/>
+                    </div>
+                    <div style="padding-left: 0.5em">
+                        <t t-if="record.date_deadline.raw_value and record.date_deadline.raw_value lt (new Date())" t-set="red">oe_kanban_text_red</t>
+                        <span t-attf-class="#{red || ''}"><field name="date_action"/></span>
+                        <t t-if="record.date_action.raw_value"> : </t>
+                        <field name="title_action"/>
+                    </div>
+                    <div class="oe_kanban_bottom_right">
+                        <img t-att-src="kanban_image('res.users', 'image_small', record.user_id.raw_value)" t-att-title="record.user_id.value" width="24" height="24" class="oe_kanban_avatar pull-right"/>
+                        <div class="pull-left" groups="base.group_user">
+                            <field name="priority" widget="priority"/>
+                        </div>
+                    </div>
+                    <div class="oe_kanban_footer_left">
+                        <t t-raw="record.message_summary.raw_value"/>
+                    </div>
+                    <div class="oe_clear"></div>
+                    <div>
+                        <field name="company_id"/>
+                    </div>
+                 </xpath>
+			</field>
+		</record>
+    </data>
+</openerp>
